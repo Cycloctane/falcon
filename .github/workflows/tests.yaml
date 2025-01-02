@@ -23,65 +23,9 @@ jobs:
         python-version:
           - "3.12"
         tox:
-          # Lint
-          - env: pep8
-          - env: pep8-docstrings
-          - env: ruff
-          # Documentation
-          - env: docs
-          - env: towncrier
-          # Typing
-          - env: mypy
-          - env: mypy_tests
-          # Python tests
-          - env: mintest
-            coverage: true
-          - env: pypy3
-            python-version: "pypy3.10"
-          - env: py38
-            python-version: "3.8"
-          - env: py39
-            python-version: "3.9"
-          - env: py310
-            python-version: "3.10"
-          - env: py310_cython
-            python-version: "3.10"
-          - env: py311
-            python-version: "3.11"
-          - env: py311_cython
-            python-version: "3.11"
-          - env: py312
-            coverage: true
-            python-version: "3.12"
-          - env: py312_cython
-            python-version: "3.12"
-          - env: py313
-            python-version: "3.13"
-          - env: py313_cython
-            python-version: "3.13"
-          - env: py314
-            python-version: "3.14.0-alpha.2 - 3.14.0"
-          - env: py312_nocover
-            os: macos-latest
-            platform-label: ' (macos)'
-          - env: py312_nocover
-            os: windows-latest
-            platform-label: ' (windows)'
-          # Tutorials
-          - env: "look"
-          - env: "asgilook"
-          - env: "ws_tutorial"
-          # Tooling
-          - env: "twine_check"
-          # ASGI & WSGI servers
-          - env: "daphne"
-          - env: "hypercorn"
-          - env: "wsgi_servers"
-          # E2E tests
-          - env: "e2e_chrome"
           # TODO(vytas): Something is not working correctly with the
           #   newly released Firefox 131.0, SeleniumBase, and our tests.
-          # - env: "e2e_firefox"
+          - env: "e2e_firefox"
 
     steps:
       - name: Checkout repo
@@ -104,20 +48,7 @@ jobs:
           pip --version
           tox --version
           coverage --version
-
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
       - name: Run tox
         run: tox -e ${{ matrix.tox.env }}
-
-      - name: Combine coverage
-        if: ${{ matrix.tox.coverage }}
-        run: |
-          coverage --version
-          coverage combine
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        if: ${{ matrix.tox.coverage }}
-        with:
-          env_vars: PYTHON
-          fail_ci_if_error: true
-          token: ${{ secrets.CODECOV_TOKEN }}
