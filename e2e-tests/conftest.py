@@ -31,7 +31,7 @@ def base_url():
     base_url = f'http://127.0.0.1:{port}'
 
     uvicorn = subprocess.Popen(
-        ('uvicorn', '--port', str(port), 'server:app'),
+        ('python3', '-X', 'faulthandler', '-m', 'uvicorn', '--port', str(port), 'server:app'),
         cwd=HERE,
     )
 
@@ -47,7 +47,11 @@ def base_url():
     else:
         pytest.fail('Could not start Uvicorn')
 
-    yield base_url
+    try:
+        yield base_url
+    finally:
+        if uvicorn.poll() is not None:
+            pytest.fail(f"uvicorn returned with {uvicorn.poll()}")
 
     uvicorn.terminate()
 
