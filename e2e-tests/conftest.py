@@ -31,7 +31,7 @@ def base_url():
     base_url = f'http://127.0.0.1:{port}'
 
     uvicorn = subprocess.Popen(
-        ('python3', '-X', 'faulthandler', '-m', 'uvicorn', '--port', str(port), 'server:app'),
+        ('python3', '-X', 'faulthandler', '-m', 'uvicorn', '--log-level', 'trace', '--port', str(port), 'server:app'),
         cwd=HERE,
     )
 
