@@ -9,7 +9,8 @@ on:
       - "*"
   pull_request:
     branches:
-      - master
+    - 'master'
+    - 'dev'
 
 jobs:
   run-tox:
