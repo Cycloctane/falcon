@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from functools import partial
 import io
 import os
@@ -16,14 +17,17 @@ if TYPE_CHECKING:
     from falcon import Request
     from falcon import Response
 
+_stat = os.stat
+
 
 def _open_range(
-    file_path: Union[str, Path], req_range: Optional[Tuple[int, int]]
+    file_path: Union[Path, str], st: os.stat_result, req_range: Optional[Tuple[int, int]]
 ) -> Tuple[ReadableIO, int, Optional[Tuple[int, int, int]]]:
     """Open a file for a ranged request.
 
     Args:
         file_path (str): Path to the file to open.
+        st (os.stat_result): fs stat result of the file.
         req_range (Optional[Tuple[int, int]]): Request.range value.
     Returns:
         tuple: Three-member tuple of (stream, content-length, content-range).
@@ -33,7 +37,7 @@ def _open_range(
             (start, end, size).
     """
     fh = io.open(file_path, 'rb')
-    size = os.fstat(fh.fileno()).st_size
+    size = st.st_size
     if req_range is None:
         return fh, size, None
 
@@ -217,23 +221,37 @@ class StaticRoute:
         if '..' in file_path or not file_path.startswith(self._directory):
             raise falcon.HTTPNotFound()
 
-        req_range = req.range
-        if req.range_unit != 'bytes':
-            req_range = None
         try:
-            stream, length, content_range = _open_range(file_path, req_range)
-            resp.set_stream(stream, length)
+            st = _stat(file_path)
+        except PermissionError:
+            raise falcon.HTTPForbidden()
         except IOError:
             if self._fallback_filename is None:
                 raise falcon.HTTPNotFound()
             try:
-                stream, length, content_range = _open_range(
-                    self._fallback_filename, req_range
-                )
-                resp.set_stream(stream, length)
-                file_path = self._fallback_filename
+                st = _stat(self._fallback_filename)
+            except PermissionError:
+                raise falcon.HTTPForbidden()
             except IOError:
                 raise falcon.HTTPNotFound()
+            else:
+                file_path = self._fallback_filename
+
+        last_modified = datetime.fromtimestamp(st.st_mtime, timezone.utc)
+        resp.last_modified = last_modified
+        if (req.if_modified_since is not None and
+                last_modified <= req.if_modified_since):
+            resp.status = falcon.HTTP_304
+            return
+
+        req_range = req.range if req.range_unit == 'bytes' else None
+        try:
+            stream, length, content_range = _open_range(file_path, st, req_range)
+            resp.set_stream(stream, length)
+        except PermissionError:
+            raise falcon.HTTPForbidden()
+        except IOError:
+            raise falcon.HTTPNotFound()
 
         suffix = os.path.splitext(file_path)[1]
         resp.content_type = resp.options.static_media_types.get(

@@ -3,6 +3,7 @@ import io
 import os
 import pathlib
 import posixpath
+from unittest import mock
 
 import pytest
 
@@ -10,6 +11,7 @@ import falcon
 from falcon.routing import StaticRoute
 from falcon.routing import StaticRouteAsync
 from falcon.routing.static import _BoundedFile
+import falcon.routing.static
 import falcon.testing as testing
 
 
@@ -51,29 +53,33 @@ def create_sr(asgi, prefix, directory, **kwargs):
 
 @pytest.fixture
 def patch_open(monkeypatch):
-    def patch(content=None, validate=None):
-        def open(path, mode):
-            class FakeFD(int):
-                pass
+    def patch(content=None, validate=None, mtime=1736617934):
+        class FakeStat:
+            def __init__(self, size, mtime):
+                self.st_size = size
+                self.st_mtime = mtime
 
-            class FakeStat:
-                def __init__(self, size):
-                    self.st_size = size
+        def open(path, mode):
 
             if validate:
                 validate(path)
 
             data = path.encode() if content is None else content
             fake_file = io.BytesIO(data)
-            fd = FakeFD(1337)
-            fd._stat = FakeStat(len(data))
-            fake_file.fileno = lambda: fd
 
             patch.current_file = fake_file
             return fake_file
 
+        def stat(path, **kwargs):
+
+            if validate:
+                validate(path)
+
+            data = path.encode() if content is None else content
+            return FakeStat(len(data), mtime)
+
         monkeypatch.setattr(io, 'open', open)
-        monkeypatch.setattr(os, 'fstat', lambda fileno: fileno._stat)
+        monkeypatch.setattr(falcon.routing.static, '_stat', stat)
 
     patch.current_file = None
     return patch
@@ -633,3 +639,80 @@ def test_options_request(client, patch_open):
     assert resp.text == ''
     assert int(resp.headers['Content-Length']) == 0
     assert resp.headers['Access-Control-Allow-Methods'] == 'GET'
+
+
+def test_last_modified(client, patch_open):
+    mtime = (1736617934, "Sat, 11 Jan 2025 17:52:14 GMT")
+    patch_open(mtime=mtime[0])
+
+    client.app.add_static_route('/assets/', '/opt/somesite/assets')
+
+    response = client.simulate_request(path='/assets/css/main.css')
+    assert response.status == falcon.HTTP_200
+    assert response.headers['Last-Modified'] == mtime[1]
+
+
+def test_if_modified_since(client, patch_open):
+    mtime = (1736617934, "Sat, 11 Jan 2025 17:52:14 GMT")
+    patch_open(mtime=mtime[0])
+
+    client.app.add_static_route('/assets/', '/opt/somesite/assets')
+
+    resp = client.simulate_request(
+        path='/assets/css/main.css',
+        headers={"If-Modified-Since": "Sat, 11 Jan 2025 17:52:15 GMT"},
+    )
+    assert resp.status == falcon.HTTP_304
+    assert resp.text == ''
+
+    resp = client.simulate_request(
+        path='/assets/css/main.css',
+        headers={"If-Modified-Since": "Sat, 11 Jan 2025 17:52:13 GMT"},
+    )
+    assert resp.status == falcon.HTTP_200
+    assert resp.text != ''
+
+
+@pytest.mark.parametrize('use_fallback', [True, False])
+def test_permission_error(
+    client,
+    patch_open,
+    use_fallback,
+    monkeypatch
+):
+    def validate(path):
+        if use_fallback and not path.endswith('fallback.css'):
+            raise IOError()
+        raise PermissionError()
+
+    patch_open(validate=validate)
+    monkeypatch.setattr('os.path.isfile', lambda file: file.endswith('fallback.css'))
+
+    client.app.add_static_route(
+        '/assets/', '/opt/somesite/assets', fallback_filename='fallback.css'
+    )
+    resp = client.simulate_request(path='/assets/css/main.css')
+
+    assert resp.status == falcon.HTTP_403
+
+
+def test_read_permission_error(client, patch_open):
+    patch_open()
+    client.app.add_static_route('/assets/', '/opt/somesite/assets')
+
+    with mock.patch("io.open", mock.mock_open()) as m:
+        m.side_effect = PermissionError()
+        resp = client.simulate_request(path='/assets/css/main.css')
+
+    assert resp.status == falcon.HTTP_403
+
+
+def test_read_ioerror(client, patch_open):
+    patch_open()
+    client.app.add_static_route('/assets/', '/opt/somesite/assets')
+
+    with mock.patch("io.open", mock.mock_open()) as m:
+        m.side_effect = IOError()
+        resp = client.simulate_request(path='/assets/css/main.css')
+
+    assert resp.status == falcon.HTTP_404
