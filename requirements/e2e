@@ -1,3 +1,4 @@
 pytest
 seleniumbase
-uvicorn[standard]
+uvicorn
+wsproto
